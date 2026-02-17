@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+
+    <head>
+        <meta charset="utf-8" />
+        <title>aaa</title>
+
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <link rel="stylesheet" href="styles.css" />
+    </head>
+
+    <body>
+        <h1>Voice Timer</h1>
+        
+
+        <div id="timer-panel">
+            <div id="time-display">00:00</div>
+
+            <div class="controls">
+                <button id="start-btn">Start at 30s</button>
+                <button id="pause-btn">Pause</button>
+                <button id="resume-btn">Resume</button>
+                <button id="stop-btn">Stop</button>
+            </div>
+
+            <div class="voice-row">
+                <button id="mic-btn">Start Mic</button>
+                <div id="transcript">Transcript</div>
+            </div>
+
+            <div class="adjust-row">
+                <input id="adjust-amount" type="number" placeholder="seconds" />
+                <button id="add-btn">+ Time</button>
+                <button id="sub-btn">- Time</button>
+            </div>
+
+            <div id="messages"></div>
+        </div>
+
+        <script src="app.js"></script>
+
+    </body>
+
+</html>

@@ -1,0 +1,27 @@
+html,body {
+  margin: 0;
+  padding: 0;
+  font-family: "Comic Sans MS", "Comic Sans", cursive, sans-serif;
+  color: #000000;
+  background: #ffffff;
+}
+
+h1 {
+    font-size: 18px; margin: 8px; 
+}
+
+#time-display {
+    font-size: 36px; margin: 8px; 
+}
+
+.controls, .voice-row, .adjust-row {
+    margin: 8px 0; 
+}
+
+button {
+    padding: 6px 10px; 
+}
+
+input[type="number"] {
+    padding: 4px; 
+}
