@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Log In | Timerboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="login.css">
+</head>
+<body>
+  <main class="login-shell">
+    <div class="login-card">
+
+      <div class="card-eyebrow">Timerboard Access</div>
+      <h1 class="card-title">Sign In</h1>
+      <p class="card-sub">Enter your credentials. A JWT will be stored in <code>localStorage</code> so the dashboard can detect your session.</p>
+
+      <form id="loginForm" novalidate>
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required>
+        </div>
+        <button type="submit">Log In</button>
+      </form>
+
+      <p id="loginStatus" class="status"></p>
+      <a class="back-link" href="index.html">← Back to Timer Dashboard</a>
+    </div>
+  </main>
+
+  <script src="login.js"></script>
+</body>
+</html>
