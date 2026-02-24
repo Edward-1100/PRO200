@@ -14,23 +14,38 @@
     <div class="login-card">
 
       <div class="card-eyebrow">Timerboard Access</div>
-      <h1 class="card-title">Sign In</h1>
-      <p class="card-sub">Enter your credentials. A JWT will be stored in <code>localStorage</code> so the dashboard can detect your session.</p>
+      <h1 id="formTitle" class="card-title">Sign In</h1>
+      <p id="formSub" class="card-sub">Enter your credentials. A JWT will be stored in <code>localStorage</code> so the dashboard can detect your session.</p>
 
       <form id="loginForm" novalidate>
-        <div class="field">
-          <label for="email">Email</label>
-          <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+
+        <div id="usernameField" class="field" style="display:none;">
+          <label for="username">Username</label>
+          <input id="username" name="username" type="text" autocomplete="username" placeholder="Your display name">
         </div>
+
+        <div class="field">
+          <label id="identifierLabel" for="email">Email</label>
+          <input id="email" name="email" type="text" autocomplete="email" placeholder="you@example.com" required>
+        </div>
+
         <div class="field">
           <label for="password">Password</label>
           <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required>
         </div>
-        <button type="submit">Log In</button>
+
+        <button id="primaryBtn" type="submit">Log In</button>
       </form>
 
       <p id="loginStatus" class="status"></p>
+
+      <p class="card-sub" style="text-align:center;margin-top:10px;">
+        <span id="toggleText">Don't have an account?</span>
+        <a id="toggleLink" href="#" class="back-link" style="display:inline-block;margin-left:6px;">Register</a>
+      </p>
+
       <a class="back-link" href="index.html">← Back to Timer Dashboard</a>
+
     </div>
   </main>
 

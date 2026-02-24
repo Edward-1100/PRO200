@@ -60,18 +60,18 @@
           </div>
 
           <div class="display-box">
-            <span id="timerDisplay">06:07</span>
+            <span id="timerDisplay">00:00</span>
             <span id="timerStatusLabel" class="display-status">Ready</span>
           </div>
 
           <div class="set-row">
             <div class="set-group">
-              <input id="minutesInput" type="number" min="0" max="999" value="6">
+              <input id="minutesInput" type="number" min="0" max="999" value="0">
               <label for="minutesInput">min</label>
             </div>
             <span class="set-sep">:</span>
             <div class="set-group">
-              <input id="secondsInput" type="number" min="0" max="59" value="7">
+              <input id="secondsInput" type="number" min="0" max="59" value="0">
               <label for="secondsInput">sec</label>
             </div>
             <button id="setBtn" class="set-btn" type="button">Set</button>
@@ -110,6 +110,8 @@
           </div>
 
           <p id="timerStatus" class="timer-status">Ready.</p>
+
+          <button id="saveTimerBtn" class="set-btn" type="button">Save Timer</button>
 
         </div>
       </section>
