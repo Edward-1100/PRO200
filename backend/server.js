@@ -12,6 +12,7 @@ app.use('/models', express.static(path.join(__dirname, 'ai_models')));
 
 const authRoutes = require('./routes/auth');
 const timersRoutes = require('./routes/timers');
+const TimerModel = require('./models/Timer');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/timers', timersRoutes);
@@ -111,7 +112,7 @@ function executeStructuredCommand(clientId, cmd, reminders) {
   const getSecsFromCmd = () => {
     if (typeof cmd.seconds === 'number') return Math.max(0, Math.round(Number(cmd.seconds) || 0));
     if (typeof cmd.minutes === 'number') return Math.max(0, Math.round(Number(cmd.minutes) * 60 || 0));
-    if (typeof cmd.durationSeconds === 'number') return Math.max(0, Math.round(Number(cmd.durationSeconds) || 0));
+    if (typeof cmd.durationSeconds === 'number') return Math.round(Number(cmd.durationSeconds) || 0);
     return 0;
   };
 
@@ -180,6 +181,29 @@ function executeStructuredCommand(clientId, cmd, reminders) {
     sendEvent(clientId, 'message', {text: 'Timer stopped'});
     sendEvent(clientId, 'state', {paused: t.paused, remainingSeconds: t.remainingSeconds});
     return {ok: true};
+  }
+
+  if (action === 'modify') {
+    const amt = Number(cmd.durationSeconds || 0) || 0;
+    if (amt === 0) return {ok: false, error: 'No amount specified to modify'};
+    if (amt > 0) {
+      t.remainingSeconds = Math.max(0, t.remainingSeconds + Math.round(amt));
+      t.endTime = Date.now() + t.remainingSeconds * 1000;
+      if (!t.paused) startTick(t);
+      sendEvent(clientId, 'message', {text: `Added ${formatSecondsPretty(amt)}`});
+      sendEvent(clientId, 'time', {remainingSeconds: t.remainingSeconds});
+      sendEvent(clientId, 'state', {paused: t.paused, remainingSeconds: t.remainingSeconds});
+      return {ok: true};
+    } else {
+      const sub = Math.abs(Math.round(amt));
+      t.remainingSeconds = Math.max(0, t.remainingSeconds - sub);
+      t.endTime = Date.now() + t.remainingSeconds * 1000;
+      if (!t.paused) startTick(t);
+      sendEvent(clientId, 'message', {text: `Subtracted ${formatSecondsPretty(sub)}`});
+      sendEvent(clientId, 'time', {remainingSeconds: t.remainingSeconds});
+      sendEvent(clientId, 'state', {paused: t.paused, remainingSeconds: t.remainingSeconds});
+      return {ok: true};
+    }
   }
 
   if (action === 'add') {
@@ -322,20 +346,30 @@ app.get('/events', (req, res) => {
   });
 });
 
-app.post('/api/command', (req, res) => {
+app.post('/api/command', async (req, res) => {
   const clientId = req.body.clientId || req.headers['x-client-id'] || req.ip;
-  const aiCmd = req.body.aiCommand;
+  let aiCmd = req.body.aiCommand;
   const reminders = req.body.reminders;
 
   if (aiCmd && typeof aiCmd === 'object') {
-    const allowed = ['start','set','pause','resume','stop','add','subtract','remove','minus'];
+    if (aiCmd.savedTimerId) {
+      try {
+        const st = await TimerModel.findOne({_id: aiCmd.savedTimerId}).lean().exec();
+        if (st) {
+          aiCmd.durationSeconds = Number(st.durationSeconds || 0);
+          aiCmd.reminders = Array.isArray(st.reminders) ? st.reminders.map(r => ({triggerSeconds: Number(r.triggerSeconds || 0), label: String(r.label || '')})) : [];
+        }
+      } catch (e) {}
+      delete aiCmd.savedTimerId;
+    }
+    const allowed = ['start','set','pause','resume','stop','add','subtract','remove','minus','modify'];
     if (!aiCmd.action || typeof aiCmd.action !== 'string') {
       return res.status(400).json({ok: false, error: 'Invalid aiCommand: missing action'});
     }
     if (!allowed.includes(String(aiCmd.action).toLowerCase())) {
       return res.status(400).json({ok: false, error: 'Invalid aiCommand: unsupported action'});
     }
-    const result = executeStructuredCommand(clientId, aiCmd, reminders);
+    const result = executeStructuredCommand(clientId, aiCmd, reminders || aiCmd.reminders || []);
     return res.json(result);
   }
 

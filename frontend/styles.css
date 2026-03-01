@@ -127,6 +127,9 @@ body {
 }
 
 .sidebar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-size: 0.7rem;
   font-weight: 600;
   letter-spacing: 0.12em;
@@ -136,6 +139,17 @@ body {
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
+
+.add-timer-btn {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  transition: background var(--tr), color var(--tr);
+}
+.add-timer-btn:hover { background: rgba(212,242,106,0.06); color: var(--accent); }
 
 .timer-item {
   display: flex;
@@ -158,7 +172,7 @@ body {
 .timer-item.active { background: var(--panel); color: var(--accent); }
 
 .item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-.item-time { font-family: var(--font-mono); font-size: 0.75rem; color: var(--muted); flex-shrink: 0; }
+.item-time {position: absolute; right: 14px; top: 50%; transform: translateY(-50%); width: 56px; text-align: right; font-family: var(--font-mono); color: var(--muted); transition: opacity 0.12s ease, visibility 0.12s ease; pointer-events: none;}
 
 /* ── TIMER PANEL ─────────────────────────────────────── */
 .timer-panel {
@@ -299,6 +313,13 @@ body {
   align-self: flex-start;
   margin-top: 2px;
 }
+.set-btn.small {
+  padding: 4px 8px;
+  font-size: 0.9rem;
+}
+.set-btn.ghost {
+  background: var(--panel);
+}
 .set-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(212,242,106,.06); }
 
 /* Controls */
@@ -412,6 +433,128 @@ body {
   margin-top: 4px;
 }
 
+
+
+.modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+.modal.open { display: flex; }
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(2px);
+}
+.modal-dialog {
+  position: relative;
+  width: 100%;
+  max-width: 540px;
+  margin: 16px;
+  z-index: 1210;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.save-modal-form {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.save-modal-form h3 {
+  margin-bottom: 4px;
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
+  color: var(--text);
+}
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field input[type="text"],
+.field input[type="number"] {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 8px;
+  outline: none;
+  font-family: var(--font-body);
+}
+.duration-row .duration-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.duration-inputs input {
+  width: 72px;
+  text-align: center;
+}
+.reminders-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.reminders-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.modal-reminders { display: flex; flex-direction: column; gap: 8px; max-height: 240px; overflow: auto; padding-right: 4px; }
+.modal-reminder-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.rem-time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rem-time input {
+  width: 54px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  text-align: center;
+}
+.rem-label {
+  flex: 1;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+}
+.rem-remove {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1rem;
+  padding: 6px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.rem-remove:hover { color: var(--danger); background: rgba(242,106,106,0.06); }
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
 /* ── FOCUS ───────────────────────────────────────────── */
 button:focus-visible,
 input:focus-visible,
@@ -434,8 +577,79 @@ a:focus-visible {
   }
   .saved-timers.collapsed { transform: none; height: 0; min-height: 0; overflow: hidden; padding: 0; }
   .sidebar-heading { width: 100%; }
-  .timer-item { border-bottom: none; border-right: 1px solid var(--border); flex: 1; min-width: 120px; }
+  .timer-item {position: relative; padding-right: 74px; display: flex; align-items: center; justify-content: space-between; gap: 8px;}
   .timer-panel { padding: 20px 12px; }
   .card { padding: 26px 20px 24px; }
   .controls { flex-wrap: wrap; }
+}
+
+.timer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  padding-right: 8px;
+}
+
+.timer-item:hover .item-time {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.timer-item:hover .timer-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.timer-row .timer-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-right: 64px;
+}
+
+.timer-actions {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.timer-row:hover .item-time {
+  opacity: 0;
+  visibility: hidden;
+}
+.timer-row:hover .timer-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.action-icon {
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.action-icon:hover {
+  background: var(--panel);
+  color: var(--accent);
+}
+
+.del-btn {
+  color: var(--muted); 
+}
+.del-btn:hover {
+  color: var(--danger); 
 }

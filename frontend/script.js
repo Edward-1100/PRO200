@@ -77,6 +77,8 @@
 
   const saveBtn = document.getElementById('saveTimerBtn');
   let currentReminders = [];
+  let currentEditingId = null;
+  let cachedSavedTimers = [];
 
   function updateSaveBtnVisibility() {
     if (!saveBtn) return;
@@ -91,16 +93,13 @@
     const payload = {
       name: timerLabel.textContent || 'Untitled',
       durationSeconds: (Number(totalSeconds) || Number(remainingSeconds) || 0),
-      reminders: []
+      reminders: currentReminders
     };
 
     try {
       const res = await fetch('/api/timers', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + token
-        },
+        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token},
         body: JSON.stringify(payload)
       });
       const j = await res.json();
@@ -125,21 +124,42 @@
     try {
       const res = await fetch('/api/timers', {headers: {Authorization: 'Bearer ' + token}});
       if (!res.ok) return [];
-      return await res.json();
+      const j = await res.json();
+      cachedSavedTimers = j || [];
+      window._savedTimers = cachedSavedTimers;
+      return cachedSavedTimers;
     } catch (e) {
       return [];
     }
   }
+  window.fetchSavedTimers = fetchSavedTimers;
+
+  function findSavedTimer(name) {
+    if (!name) return null;
+    const list = (Array.isArray(cachedSavedTimers) && cachedSavedTimers.length) ? cachedSavedTimers : (window._savedTimers || []);
+    const needle = String(name).trim().toLowerCase();
+    let exact = list.find(t => String(t.name || '').trim().toLowerCase() === needle);
+    if (exact) return exact;
+    let partial = list.find(t => String(t.name || '').trim().toLowerCase().includes(needle));
+    if (partial) return partial;
+    const compact = needle.replace(/[^a-z0-9]/g,'');
+    return list.find(t => String(t.name || '').toLowerCase().replace(/[^a-z0-9]/g,'').includes(compact)) || null;
+  }
+  window.findSavedTimer = findSavedTimer;
 
   function renderSavedTimers(list) {
+    cachedSavedTimers = list || [];
     const container = document.getElementById('sidebar');
     if (!container) return;
     const heading = container.querySelector('.sidebar-heading');
     while (container.firstChild) container.removeChild(container.firstChild);
     if (heading) container.appendChild(heading);
     for (const t of list) {
+      const row = document.createElement('div');
+      row.className = 'timer-row';
       const btn = document.createElement('button');
       btn.className = 'timer-item';
+      btn.dataset.id = String(t._id || t.id || '');
       btn.dataset.minutes = Math.floor((t.durationSeconds || 0) / 60);
       btn.dataset.seconds = (t.durationSeconds || 0) % 60;
       const name = document.createElement('span');
@@ -161,7 +181,50 @@
         setLocalTimerState(Number(btn.dataset.minutes || 0) * 60 + Number(btn.dataset.seconds || 0), name.textContent.trim());
         currentReminders = Array.isArray(t.reminders) ? t.reminders.map(r => ({triggerSeconds: Number(r.triggerSeconds) || 0, label: String(r.label || '')})) : [];
       });
-      container.appendChild(btn);
+      const actions = document.createElement('div');
+      actions.className = 'timer-actions';
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'action-icon edit-btn';
+      editBtn.title = 'Edit';
+      editBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openSaveModalForEdit(t);
+      });
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'action-icon del-btn';
+      delBtn.title = 'Delete';
+      delBtn.innerHTML = 'X';
+      delBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const ok = confirm('Delete this timer?');
+        if (!ok) return;
+        const token = localStorage.getItem(JWT_KEY);
+        if (!token) {showMessage('Sign in to delete timers'); return;}
+        const id = String(t._id || t.id || '');
+        try {
+          const res = await fetch('/api/timers/' + id, {method: 'DELETE', headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token}
+          });
+          if (res.ok) {
+            showMessage('Deleted');
+            const list2 = await fetchSavedTimers();
+            renderSavedTimers(list2);
+          } else {
+            const j = await res.json();
+            showMessage(j.error || 'Delete failed');
+          }
+        } catch (err) {
+          console.error('delete error', err);
+          showMessage('Delete failed');
+        }
+      });
+      actions.appendChild(editBtn);
+      actions.appendChild(delBtn);
+      row.appendChild(btn);
+      row.appendChild(actions);
+      container.appendChild(row);
     }
   }
 
@@ -286,19 +349,16 @@
 
   function validateAiCommand(obj) {
     if (!obj || typeof obj !== 'object') return false;
-    const allowed = ['start','set','pause','resume','stop','add','subtract','remove','minus'];
+    const allowed = ['start','set','pause','resume','stop','add','subtract','remove','minus','modify'];
     if (!obj.action || typeof obj.action !== 'string') return false;
     if (!allowed.includes(obj.action.toLowerCase())) return false;
-    const clampNumber = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0) ? Math.round(v) : null;
+    const clampNumber = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= -3600000 && v <= 3600000) ? Math.round(v) : null;
     if (obj.durationSeconds !== undefined && clampNumber(obj.durationSeconds) === null) return false;
-    if (obj.seconds !== undefined && clampNumber(obj.seconds) === null) return false;
-    if (obj.minutes !== undefined && clampNumber(obj.minutes) === null) return false;
-    if (obj.amountSeconds !== undefined && clampNumber(obj.amountSeconds) === null) return false;
     if (obj.reminders !== undefined) {
       if (!Array.isArray(obj.reminders)) return false;
       for (const r of obj.reminders) {
         if (typeof r !== 'object') return false;
-        if (clampNumber(Number(r.triggerSeconds || r.trigger_seconds || r.seconds)) === null) return false;
+        if (clampNumber(Number(r.triggerSeconds || r.trigger_seconds || 0)) === null) return false;
         if (typeof (r.label || r.name || r.msg || '') !== 'string') return false;
       }
     }
@@ -307,20 +367,37 @@
 
   async function parseWithLLM(transcript) {
     if (!webllmEngine) return null;
-    const prompt = `You are an assistant that converts natural language timer commands into a strict JSON command. Output ONLY valid JSON and nothing else.
+    let namesPrefix = '';
+    if (Array.isArray(cachedSavedTimers) && cachedSavedTimers.length) {
+      const names = cachedSavedTimers.map(t => String(t.name || '')).filter(Boolean).slice(0,20).join(', ');
+      if (names) namesPrefix = `Known timers:${names}\n\n`;
+    }
+    const prompt = namesPrefix + `You are an assistant that converts natural language timer commands into a strict JSON command. Output ONLY valid JSON and nothing else.
 
 Schema:
 {
-  "action": "start"|"set"|"pause"|"resume"|"stop"|"add"|"subtract",
+  "action": "start" | "pause" | "resume" | "stop" | "modify",
   "durationSeconds": <integer, optional>,
-  "seconds": <integer, optional>,
-  "minutes": <integer, optional>,
-  "amountSeconds": <integer, optional>,
   "reminders": [{"triggerSeconds": <integer>, "label": "<string>"}]
 }
 
 Examples:
 "Remind me in 8 minutes, and give a 2-minute warning" -> {"action":"start","durationSeconds":480,"reminders":[{"triggerSeconds":120,"label":"2 minutes left"}]}
+"Start a timer for 20 seconds with a reminder half way through" -> {"action":"start","durationSeconds":20,"reminders":[{"triggerSeconds":10,"label":"Halfway"}]}
+"Remind me in 5 minutes to take the pizza out" -> {"action":"start","durationSeconds":300,"reminders":[{"triggerSeconds":0,"label":"Take pizza out"}]}
+"Set a 10-minute timer and warn me at 5 and 1 minute left" -> {"action":"start","durationSeconds":600,"reminders":[{"triggerSeconds":300,"label":"5 minutes left"},{"triggerSeconds":60,"label":"1 minute left"}]}
+"Add thirty seconds to the timer" -> {"action":"modify","durationSeconds":30,"reminders":[]}
+"Take away 2 minutes" -> {"action":"modify","durationSeconds":-120,"reminders":[]}
+"Pause the timer now" -> {"action":"pause"}
+"Resume the timer please" -> {"action":"resume"}
+"Cancel the timer / stop everything" -> {"action":"stop"}
+"Start a 1 hour and 15 minute timer for the lasagna" -> {"action":"start","durationSeconds":4500,"reminders":[]}
+"Set timer for 2" -> {"action":"start","durationSeconds":120,"reminders":[]} 
+"Remind me in 90 seconds, and also give me a warning 30 seconds before the end" -> {"action":"start","durationSeconds":90,"reminders":[{"triggerSeconds":30,"label":"30 seconds left"}]}
+"Set a 7 minute timer give me a 2-minute warning and a 30-second warning" -> {"action":"start","durationSeconds":420,"reminders":[{"triggerSeconds":120,"label":"2 minutes left"},{"triggerSeconds":30,"label":"30 seconds left"}]}
+"Start my Pasta Timer" -> {"action":"start","savedTimerName":"Pasta Timer"}
+"Please run the 'Quick' timer" -> {"action":"start","savedTimerName":"Quick"}
+"Start the timer called Baked Potato Timer" -> {"action":"start","savedTimerName":"Baked Potato Timer"}
 
 Now convert this input to JSON: "${transcript.replace(/"/g, '\\"')}"`;
     try {
@@ -348,16 +425,42 @@ Now convert this input to JSON: "${transcript.replace(/"/g, '\\"')}"`;
 
   async function postAiCommand(aiCommand) {
     try {
+      if (!aiCommand) return;
+      let cmd = Object.assign({}, aiCommand);
+      if (cmd.savedTimerName && (!cmd.durationSeconds || Number(cmd.durationSeconds) === 0)) {
+        const lookup = (Array.isArray(cachedSavedTimers) && cachedSavedTimers.length) ? cachedSavedTimers : await fetchSavedTimers().catch(()=>[]);
+        const name = String(cmd.savedTimerName || '').trim().toLowerCase();
+        let found = (lookup || []).find(t => String(t.name || '').trim().toLowerCase() === name) || (lookup || []).find(t => String(t.name || '').trim().toLowerCase().startsWith(name)) || (lookup || []).find(t => String(t.name || '').trim().toLowerCase().includes(name));
+        if (found) {
+          cmd.durationSeconds = Number(found.durationSeconds || 0);
+          cmd.reminders = Array.isArray(found.reminders) ? found.reminders.map(r => ({triggerSeconds: Number(r.triggerSeconds || 0), label: String(r.label || '')})) : [];
+        } else {
+          showMessage(`No saved timer named "${cmd.savedTimerName}"`);
+          delete cmd.savedTimerName;
+          return;
+        }
+        delete cmd.savedTimerName;
+      }
+      if (cmd.savedTimerId && (!cmd.durationSeconds || Number(cmd.durationSeconds) === 0)) {
+        const lookup = (Array.isArray(cachedSavedTimers) && cachedSavedTimers.length) ? cachedSavedTimers : await fetchSavedTimers().catch(()=>[]);
+        const found = (lookup || []).find(t => String(t._id || t.id || '') === String(cmd.savedTimerId || ''));
+        if (found) {
+          cmd.durationSeconds = Number(found.durationSeconds || 0);
+          cmd.reminders = Array.isArray(found.reminders) ? found.reminders.map(r => ({triggerSeconds: Number(r.triggerSeconds || 0), label: String(r.label || '')})) : [];
+        }
+        delete cmd.savedTimerId;
+      }
       await fetch('/api/command', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({clientId: localStorage.getItem('vc_client_id'), aiCommand, reminders: aiCommand.reminders || []})
+        body: JSON.stringify({clientId: localStorage.getItem('vc_client_id'), aiCommand: cmd, reminders: cmd.reminders || []})
       });
     } catch (err) {
       console.error('postAiCommand error', err);
       showMessage('Command error');
     }
   }
+  window.postAiCommand = postAiCommand;
 
   /* ── Mic control ──────────────────────────────────────── */
   function startMic() {
@@ -452,6 +555,184 @@ Now convert this input to JSON: "${transcript.replace(/"/g, '\\"')}"`;
     });
   });
 
+  const addTimerBtn = document.getElementById('addTimerBtn');
+  const saveModal = document.getElementById('saveModal');
+  const modalForm = document.getElementById('saveModalForm');
+  const modalName = document.getElementById('modalName');
+  const modalHours = document.getElementById('modalHours');
+  const modalMinutes = document.getElementById('modalMinutes');
+  const modalSeconds = document.getElementById('modalSeconds');
+  const modalReminders = document.getElementById('modalReminders');
+  const modalAddReminder = document.getElementById('modalAddReminder');
+  const modalCancel = document.getElementById('modalCancel');
+
+  function openSaveModal() {
+    if (!saveModal) return;
+    modalReminders.innerHTML = '';
+    modalName.value = timerLabel.textContent || 'Untitled';
+    const secs = Math.max(0, Number(totalSeconds || remainingSeconds || 0));
+    modalHours.value = String(Math.floor(secs / 3600));
+    modalMinutes.value = String(Math.floor((secs % 3600) / 60));
+    modalSeconds.value = String(secs % 60);
+    if (Array.isArray(currentReminders) && currentReminders.length) {
+      for (const r of currentReminders) {
+        const mins = Math.floor((Number(r.triggerSeconds || 0)) / 60);
+        const secsRem = Math.max(0, Number(r.triggerSeconds || 0) - mins * 60);
+        createReminderRow(mins, secsRem, String(r.label || ''));
+      }
+    }
+    currentEditingId = null;
+    saveModal.setAttribute('aria-hidden', 'false');
+    saveModal.classList.add('open');
+    modalName.focus();
+  }
+
+  function openSaveModalForEdit(t) {
+    if (!saveModal) return;
+    modalReminders.innerHTML = '';
+    modalName.value = t.name || 'Untitled';
+    const total = Math.max(0, Number(t.durationSeconds || 0));
+    modalHours.value = String(Math.floor(total / 3600));
+    modalMinutes.value = String(Math.floor((total % 3600) / 60));
+    modalSeconds.value = String(total % 60);
+    currentReminders = Array.isArray(t.reminders) ? t.reminders.map(r => ({triggerSeconds: Number(r.triggerSeconds) || 0, label: String(r.label || '')})) : [];
+    for (const r of currentReminders) {
+      const mins = Math.floor((Number(r.triggerSeconds || 0)) / 60);
+      const secsRem = Math.max(0, Number(r.triggerSeconds || 0) - mins * 60);
+      createReminderRow(mins, secsRem, String(r.label || ''));
+    }
+    currentEditingId = String(t._id || t.id || '');
+    saveModal.setAttribute('aria-hidden', 'false');
+    saveModal.classList.add('open');
+    modalName.focus();
+  }
+
+  function closeSaveModal() {
+    if (!saveModal) return;
+    saveModal.setAttribute('aria-hidden', 'true');
+    saveModal.classList.remove('open');
+    modalReminders.innerHTML = '';
+    currentEditingId = null;
+  }
+
+  function createReminderRow(mins = 0, secs = 0, label = '') {
+    const row = document.createElement('div');
+    row.className = 'modal-reminder-row';
+    const timeWrap = document.createElement('div');
+    timeWrap.className = 'rem-time';
+    const inM = document.createElement('input');
+    inM.type = 'number';
+    inM.min = '0';
+    inM.value = String(Number(mins) || 0);
+    inM.className = 'rem-mins';
+    inM.setAttribute('aria-label', 'minutes');
+    const sep = document.createElement('span');
+    sep.className = 'rem-sep';
+    sep.textContent = ':';
+    const inS = document.createElement('input');
+    inS.type = 'number';
+    inS.min = '0';
+    inS.max = '59';
+    inS.value = String(Number(secs) || 0);
+    inS.className = 'rem-secs';
+    inS.setAttribute('aria-label', 'seconds');
+    timeWrap.appendChild(inM);
+    timeWrap.appendChild(sep);
+    timeWrap.appendChild(inS);
+    const labelInput = document.createElement('input');
+    labelInput.type = 'text';
+    labelInput.className = 'rem-label';
+    labelInput.placeholder = 'Reminder label';
+    labelInput.value = label;
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'rem-remove';
+    removeBtn.setAttribute('aria-label', 'remove reminder');
+    removeBtn.textContent = 'X';
+    removeBtn.addEventListener('click', () => {row.remove();});
+    row.appendChild(timeWrap);
+    row.appendChild(labelInput);
+    row.appendChild(removeBtn);
+    modalReminders.appendChild(row);
+  }
+
+  if (addTimerBtn) addTimerBtn.addEventListener('click', openSaveModal);
+  if (modalAddReminder) modalAddReminder.addEventListener('click', () => {createReminderRow(0, 0, '');});
+
+  if (modalCancel) modalCancel.addEventListener('click', (e) => {e.preventDefault(); closeSaveModal();});
+
+  modalForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = String(modalName.value || '').trim() || 'Untitled';
+    const h = Math.max(0, Number(modalHours.value) || 0);
+    const m = Math.max(0, Number(modalMinutes.value) || 0);
+    const s = Math.max(0, Number(modalSeconds.value) || 0);
+    const duration = h * 3600 + m * 60 + s;
+    if (!duration || duration <= 0) {
+      showMessage('Please enter a valid duration');
+      return;
+    }
+    const reminders = [];
+    const rows = Array.from(modalReminders.querySelectorAll('.modal-reminder-row'));
+    for (const r of rows) {
+      const minsEl = r.querySelector('.rem-mins');
+      const secsEl = r.querySelector('.rem-secs');
+      const labEl = r.querySelector('.rem-label');
+      const minsV = Math.max(0, Number(minsEl.value) || 0);
+      const secsV = Math.max(0, Math.min(59, Number(secsEl.value) || 0));
+      const labelV = String(labEl.value || '').trim() || '';
+      const trigger = minsV * 60 + secsV;
+      reminders.push({triggerSeconds: trigger, label: labelV || `Reminder at ${formatTime(trigger)}`});
+    }
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) {showMessage('Sign in to save timers'); return;}
+    const payload = {name, durationSeconds: duration, reminders};
+    try {
+      if (currentEditingId) {
+        const id = currentEditingId;
+        const res = await fetch('/api/timers/' + id, {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token},
+          body: JSON.stringify(payload)
+        });
+        const j = await res.json();
+        if (res.ok) {
+          showMessage('Timer updated');
+          closeSaveModal();
+          const list = await fetchSavedTimers();
+          renderSavedTimers(list);
+        } else {
+          showMessage(j.error || 'Update failed');
+        }
+      } else {
+        const res = await fetch('/api/timers', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token},
+          body: JSON.stringify(payload)
+        });
+        const j = await res.json();
+        if (res.ok) {
+          showMessage('Timer saved');
+          closeSaveModal();
+          const list = await fetchSavedTimers();
+          renderSavedTimers(list);
+        } else {
+          showMessage(j.error || 'Save failed');
+        }
+      }
+    } catch (err) {
+      console.error('modal save error', err);
+      showMessage('Save failed');
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && saveModal && saveModal.classList.contains('open')) {
+      closeSaveModal();
+    }
+  });
+
+  
   /* ── Init ─────────────────────────────────────────────── */
   updateAuthUi();
   updateMicUi();
