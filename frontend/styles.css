@@ -653,3 +653,48 @@ a:focus-visible {
 .del-btn:hover {
   color: var(--danger); 
 }
+
+
+.timer-item-df{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+
+  padding:12px 14px;
+  border:none;
+  border-bottom:1px solid var(--border);
+
+  background:none;
+  color:var(--subtext);
+  font-family:var(--font-body);
+  font-size:0.9rem;
+
+  cursor:pointer;
+  text-align:left;
+  white-space:nowrap;
+
+  transition:background var(--tr), color var(--tr);
+}
+
+.timer-item-df:hover{
+  background:var(--panel);
+  color:var(--text);
+}
+
+.timer-item-df.active{
+  background:var(--panel);
+  color:var(--accent);
+}
+
+.item-name-df{
+  flex:1;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.item-time-df{
+  font-family:var(--font-mono);
+  color:var(--muted);
+  margin-left:auto;
+}

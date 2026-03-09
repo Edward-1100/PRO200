@@ -1,14 +1,25 @@
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const mongoose = require('mongoose');
 const {v4: uuidv4} = require('uuid');
-require('dotenv').config();
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use('/ai_models', express.static(path.join(__dirname, 'ai_models'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.wasm')) {
+      res.setHeader('Content-Type', 'application/wasm');
+    }
+  }
+}));
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
-app.use('/models', express.static(path.join(__dirname, 'ai_models')));
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "../frontend/index.html"));
+});
 
 const authRoutes = require('./routes/auth');
 const timersRoutes = require('./routes/timers');
@@ -362,12 +373,15 @@ app.post('/api/command', async (req, res) => {
       } catch (e) {}
       delete aiCmd.savedTimerId;
     }
-    const allowed = ['start','set','pause','resume','stop','add','subtract','remove','minus','modify'];
+    const allowed = ['start','set','pause','resume','stop','add','subtract','remove','minus','modify','save'];
     if (!aiCmd.action || typeof aiCmd.action !== 'string') {
       return res.status(400).json({ok: false, error: 'Invalid aiCommand: missing action'});
     }
     if (!allowed.includes(String(aiCmd.action).toLowerCase())) {
       return res.status(400).json({ok: false, error: 'Invalid aiCommand: unsupported action'});
+    }
+    if (String(aiCmd.action).toLowerCase() === 'save') {
+      return res.status(400).json({ok: false, error: 'Save must be performed by client'});
     }
     const result = executeStructuredCommand(clientId, aiCmd, reminders || aiCmd.reminders || []);
     return res.json(result);
@@ -384,7 +398,13 @@ app.get('/api/state', (req, res) => {
   res.json(t);
 });
 const PORT = process.env.PORT || 4000;
-mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/voice_timer').then(() => {app.listen(PORT, () => {console.log('Server running on http://localhost:' + PORT);});}).catch(err => {
+const MONGO_URI = process.env.MONGO_URI;
+if (!MONGO_URI) {
+  console.error("MONGO_URI not found in .env");
+  process.exit(1);
+}
+
+mongoose.connect(MONGO_URI).then(() => {app.listen(PORT, () => {console.log('Server running on http://localhost:' + PORT);});}).catch(err => {
   console.error('mongo connect error', err);
   process.exit(1);
 });
