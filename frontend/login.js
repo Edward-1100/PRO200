@@ -15,6 +15,14 @@
   const emailInput = document.getElementById('email');
   const passInput = document.getElementById('password');
   const userInput = document.getElementById('username');
+  const form = document.getElementById('loginForm');
+
+  if (!primaryBtn || !toggleLink || !toggleText || !formTitle || !formSub || !usernameField ||
+      !statusEl || !identifierLabel || !emailInput || !passInput || !userInput || !form) {
+    // Required elements missing; avoid runtime errors on partially loaded pages.
+    console.error('Login page is missing required elements.');
+    return;
+  }
 
   let mode = 'login';
 
@@ -42,13 +50,28 @@
     statusEl.textContent = '';
   }
 
+  function setBusy(isBusy) {
+    primaryBtn.disabled = isBusy;
+    primaryBtn.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+  }
+
   async function postAuth(path, body) {
     const res = await fetch('/api/auth' + path, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-    return res.json();
+
+    const contentType = res.headers.get('content-type') || '';
+    const isJson = contentType.includes('application/json');
+    const payload = isJson ? await res.json() : { error: await res.text() };
+
+    if (!res.ok) {
+      const err = payload && payload.error ? payload.error : 'Request failed';
+      throw new Error(err);
+    }
+
+    return payload;
   }
 
   function setStatus(msg, type = '') {
@@ -56,47 +79,76 @@
     statusEl.className = 'status ' + type;
   }
 
-  primaryBtn.addEventListener('click', async (e) => {
-    e.preventDefault();
+  function validateInputs(identifier, password, username) {
+    if (!identifier || !password || (mode === 'register' && !username)) {
+      return 'Please fill required fields.';
+    }
+    if (password.length < 6) {
+      return 'Password must be at least 6 characters.';
+    }
+    if (mode === 'register' && username.length < 2) {
+      return 'Username must be at least 2 characters.';
+    }
+    return '';
+  }
+
+  async function handleSubmit() {
     const identifier = emailInput.value.trim();
     const password = passInput.value.trim();
     const username = userInput.value.trim();
 
-    if (!identifier || !password || (mode === 'register' && !username)) {
-      setStatus('Please fill required fields.', 'error');
+    const validationError = validateInputs(identifier, password, username);
+    if (validationError) {
+      setStatus(validationError, 'error');
       return;
     }
 
     if (mode === 'login') {
       setStatus('Logging in...');
-      const r = await postAuth('/login', {identifier, password});
-      if (r && r.token) {
-        localStorage.setItem(JWT_KEY, r.token);
-        setStatus('Logged in', 'success');
-        setTimeout(() => {window.location.href = '/index.html';}, 400);
-      } else {
-        setStatus(r.error || 'Login failed', 'error');
+      setBusy(true);
+      try {
+        const r = await postAuth('/login', { identifier, password });
+        if (r && r.token) {
+          localStorage.setItem(JWT_KEY, r.token);
+          setStatus('Logged in', 'success');
+          setTimeout(() => { window.location.href = '/index.html'; }, 400);
+        } else {
+          setStatus('Login failed', 'error');
+        }
+      } catch (err) {
+        setStatus(err.message || 'Login failed', 'error');
+      } finally {
+        setBusy(false);
       }
     } else {
       setStatus('Registering...');
-      const r = await postAuth('/register', {username, email: identifier, password});
-      if (r && r.token) {
-        localStorage.setItem(JWT_KEY, r.token);
-        setStatus('Registered', 'success');
-        setTimeout(() => {window.location.href = '/index.html';}, 400);
-      } else {
-        setStatus(r.error || 'Registration failed', 'error');
+      setBusy(true);
+      try {
+        const r = await postAuth('/register', { username, email: identifier, password });
+        if (r && r.token) {
+          localStorage.setItem(JWT_KEY, r.token);
+          setStatus('Registered', 'success');
+          setTimeout(() => { window.location.href = '/index.html'; }, 400);
+        } else {
+          setStatus('Registration failed', 'error');
+        }
+      } catch (err) {
+        setStatus(err.message || 'Registration failed', 'error');
+      } finally {
+        setBusy(false);
       }
     }
-  });
+  }
 
   toggleLink.addEventListener('click', (e) => {
     e.preventDefault();
     setMode(mode === 'login' ? 'register' : 'login');
   });
 
-  const form = document.getElementById('loginForm');
-  form.addEventListener('submit', (e) => {e.preventDefault(); primaryBtn.click();});
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    handleSubmit();
+  });
 
   setMode('login');
 })();
