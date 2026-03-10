@@ -38,13 +38,58 @@
   let recognition = null;
   let micEnabled  = false;
 
-  //WebLLM state
+  //LLM state
   let webllmEngine = null;
   let webllmInitProgress = 0;
   let webllmLoading = false;
   let webllmReady = false;
+  const modelsBase = `${location.origin}/ai_models`;
+  const LOCAL_MODEL_FOLDER = 'Llama-3.2-3B-Instruct';
+  const LOCAL_MODEL_ID = 'llama-3.2-3B-Instruct-q4f32_1-MLC';
   const WEBLLM_MODULE = "https://esm.run/@mlc-ai/web-llm";
-  const WEBLLM_MODEL_ID = "Llama-3.1-8B-Instruct-q4f32_1-MLC";
+  const WEBLLM_MODEL_ID = "Llama-3.2-3B-Instruct-q4f32_1-MLC";
+
+  const MODEL_RUNTIME_WASM = `${modelsBase}/${LOCAL_MODEL_FOLDER}/Llama-3.2-3B-Instruct-q4f32_1-ctx4k_cs1k-webgpu.wasm`;
+
+  window.modelsBase = modelsBase;
+  window.LOCAL_MODEL_FOLDER = LOCAL_MODEL_FOLDER;
+  window.LOCAL_MODEL_ID = LOCAL_MODEL_ID;
+  
+  //Command queue
+  const commandQueue = [];
+  let commandProcessing = false;
+
+  async function queueAiCommand(cmd, reminders) {
+    return new Promise((resolve) => {
+      commandQueue.push({cmd, reminders, resolve});
+      processCommandQueue();
+    });
+  }
+
+  async function processCommandQueue() {
+    if (commandProcessing) return;
+    const item = commandQueue.shift();
+    if (!item) return;
+    commandProcessing = true;
+    try {
+      const res = await fetch('/api/command', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          clientId: localStorage.getItem('vc_client_id'),
+          aiCommand: item.cmd,
+          reminders: item.reminders || [] })
+        });
+      let j = null;
+      try {j = await res.json();} catch (e) {j = null;}
+      item.resolve(j || {ok:res.ok});
+    } catch (e) {
+      item.resolve({ok:false,error:String(e)});
+    } finally {
+      commandProcessing = false;
+      setTimeout(processCommandQueue,50);
+    }
+  }
 
   /* ── Helpers ──────────────────────────────────────────── */
   function formatTime(value) {
@@ -127,6 +172,7 @@
       const j = await res.json();
       cachedSavedTimers = j || [];
       window._savedTimers = cachedSavedTimers;
+      window.cachedSavedTimers = cachedSavedTimers;
       return cachedSavedTimers;
     } catch (e) {
       return [];
@@ -147,8 +193,52 @@
   }
   window.findSavedTimer = findSavedTimer;
 
+  async function saveAiTimer(cmd) {
+    const token = localStorage.getItem(JWT_KEY);
+    if (!token) {showMessage('Sign in to save timers'); return {ok: false, error: 'not-signed-in'};}
+    let duration = Number(cmd.durationSeconds || 0) || 0;
+    if (!duration) duration = Math.max(0, Math.round(Number(totalSeconds || remainingSeconds || 0)));
+    if (!duration) {
+      try {
+        const clientId = localStorage.getItem('vc_client_id');
+        const r = await fetch('/api/state?clientId=' + clientId);
+        if (r.ok) {
+          const s = await r.json();
+          duration = Math.max(0, Math.round(s.remainingSeconds || 0));
+        }
+      } catch (e) {}
+    }
+    if (!duration || duration <= 0) {showMessage('No duration available to save'); return {ok: false, error: 'no-duration'};}
+    const name = String(cmd.timerName || timerLabel.textContent || `Timer ${new Date().toISOString().slice(0,19).replace('T',' ')}`).trim() || `Timer ${Date.now()}`;
+    const reminders = Array.isArray(cmd.reminders) && cmd.reminders.length ? cmd.reminders : (Array.isArray(currentReminders) ? currentReminders : []);
+    const payload = {name, durationSeconds: Math.round(duration), reminders: reminders.map(r => ({triggerSeconds: Number(r.triggerSeconds||0), label: String(r.label||'')}))};
+    try {
+      const res = await fetch('/api/timers', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json', 'Authorization': 'Bearer ' + token},
+        body: JSON.stringify(payload)
+      });
+      const j = await res.json().catch(()=>({}));
+      if (res.ok) {
+        showMessage('Timer saved');
+        await fetchSavedTimers().catch(()=>null);
+        renderSavedTimers(window._savedTimers || []);
+        return {ok: true, saved: j};
+      } else {
+        showMessage(j.error || 'Save failed');
+        return {ok: false, error: j.error || 'save-failed'};
+      }
+    } catch (err) {
+      console.error('saveAiTimer error', err);
+      showMessage('Save failed');
+      return {ok: false, error: 'exception'};
+    }
+  }
+
   function renderSavedTimers(list) {
     cachedSavedTimers = list || [];
+    window._savedTimers = cachedSavedTimers;
+    window.cachedSavedTimers = cachedSavedTimers;
     const container = document.getElementById('sidebar');
     if (!container) return;
     const heading = container.querySelector('.sidebar-heading');
@@ -202,18 +292,18 @@
         const ok = confirm('Delete this timer?');
         if (!ok) return;
         const token = localStorage.getItem(JWT_KEY);
-        if (!token) {showMessage('Sign in to delete timers'); return;}
+        if (!token) {showMessage('Sign In To Delete Timers (How did you get this?)'); return;}
         const id = String(t._id || t.id || '');
         try {
           const res = await fetch('/api/timers/' + id, {method: 'DELETE', headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token}
           });
           if (res.ok) {
-            showMessage('Deleted');
+            showMessage('Timer Deleted');
             const list2 = await fetchSavedTimers();
             renderSavedTimers(list2);
           } else {
             const j = await res.json();
-            showMessage(j.error || 'Delete failed');
+            showMessage(j.error || 'Failed to Delete Timer');
           }
         } catch (err) {
           console.error('delete error', err);
@@ -311,15 +401,49 @@
         webllmInitProgress = progress;
         timerStatus.textContent = `LLM loading ${Math.round(progress * 100)}%`;
       };
-      webllmEngine = await CreateMLCEngine(WEBLLM_MODEL_ID, {initProgressCallback: progressCb});
+
+      const modelUrl = `${modelsBase}/${LOCAL_MODEL_FOLDER}`;
+      console.info('Checking Local Model At', modelUrl);
+      const tryLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.protocol === 'file:';
+      let triedLocal = false;
+      if (tryLocal) {
+        try {
+          const cfgRes = await fetch(modelUrl + '/mlc-chat-config.json', {method: 'GET'});
+          if (cfgRes.ok) {
+            triedLocal = true;
+            const appConfig = {model_list: [{model: modelUrl, model_id: LOCAL_MODEL_ID, model_lib: MODEL_RUNTIME_WASM}]};
+            try {
+              console.info('Attempting To Load Local Model', LOCAL_MODEL_ID);
+              webllmEngine = await CreateMLCEngine(LOCAL_MODEL_ID, {appConfig, initProgressCallback: progressCb});
+              window.webllmEngine = webllmEngine;
+              webllmReady = true;
+              timerStatus.textContent = 'LLM ready (local)';
+              console.info('Loaded Local Model');
+              setTimeout(() => {if (timerStatus.textContent === 'LLM ready (local)') timerStatus.textContent = '';}, 1500);
+              return;
+            } catch (localErr) {
+              console.warn('Local Model Failed, Trying Remote Fallback', localErr);
+            }
+          } else {
+            console.info('Could Not Find mlc-chat-config (status', cfgRes.status,')');
+          }
+        } catch (e) {
+          console.info(e);
+        }
+      }
+
+      console.info('Initializing Remote Model', WEBLLM_MODEL_ID);
+      webllmEngine = await CreateMLCEngine(WEBLLM_MODEL_ID, {initProgressCallback:progressCb});
+      window.webllmEngine = webllmEngine;
       webllmReady = true;
-      timerStatus.textContent = 'LLM ready';
-      setTimeout(() => {if (timerStatus.textContent === 'LLM ready') timerStatus.textContent = '';}, 1500);
+      timerStatus.textContent = triedLocal ? 'LLM ready (remote fallback)' : 'LLM ready';
+      console.info('Loaded Remote Model', WEBLLM_MODEL_ID);
+      setTimeout(() => {if (timerStatus.textContent.startsWith('LLM ready')) timerStatus.textContent = '';}, 1500);
     } catch (err) {
       webllmEngine = null;
       webllmReady = false;
       timerStatus.textContent = 'LLM unavailable';
-      console.error('WebLLM init error', err);
+      console.error('WebLLM Init Error', err);
       setTimeout(() => {if (timerStatus.textContent === 'LLM unavailable') timerStatus.textContent = '';}, 2000);
     } finally {
       webllmLoading = false;
@@ -349,7 +473,7 @@
 
   function validateAiCommand(obj) {
     if (!obj || typeof obj !== 'object') return false;
-    const allowed = ['start','set','pause','resume','stop','add','subtract','remove','minus','modify'];
+    const allowed = ['start','set','pause','resume','stop','add','subtract','remove','minus','modify','save'];
     if (!obj.action || typeof obj.action !== 'string') return false;
     if (!allowed.includes(obj.action.toLowerCase())) return false;
     const clampNumber = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= -3600000 && v <= 3600000) ? Math.round(v) : null;
@@ -376,7 +500,7 @@
 
 Schema:
 {
-  "action": "start" | "pause" | "resume" | "stop" | "modify",
+  "action": "start" | "pause" | "resume" | "stop" | "modify" | "save",
   "durationSeconds": <integer, optional>,
   "reminders": [{"triggerSeconds": <integer>, "label": "<string>"}]
 }
@@ -385,9 +509,10 @@ Examples:
 "Remind me in 8 minutes, and give a 2-minute warning" -> {"action":"start","durationSeconds":480,"reminders":[{"triggerSeconds":120,"label":"2 minutes left"}]}
 "Start a timer for 20 seconds with a reminder half way through" -> {"action":"start","durationSeconds":20,"reminders":[{"triggerSeconds":10,"label":"Halfway"}]}
 "Remind me in 5 minutes to take the pizza out" -> {"action":"start","durationSeconds":300,"reminders":[{"triggerSeconds":0,"label":"Take pizza out"}]}
+"Start a 3 minute timer with a remider every 30 seconds" -> {"action":"start","durationSeconds":180,"reminders":[{"triggerSeconds":150,"label":"30 Seconds Passed"},{"triggerSeconds":120,"label":"30 Seconds Passed"},{"triggerSeconds":90,"label":"30 Seconds Passed"},{"triggerSeconds":60,"label":"30 Seconds Passed"},{"triggerSeconds":30,"label":"30 Seconds Passed"},]}
 "Set a 10-minute timer and warn me at 5 and 1 minute left" -> {"action":"start","durationSeconds":600,"reminders":[{"triggerSeconds":300,"label":"5 minutes left"},{"triggerSeconds":60,"label":"1 minute left"}]}
 "Add thirty seconds to the timer" -> {"action":"modify","durationSeconds":30,"reminders":[]}
-"Take away 2 minutes" -> {"action":"modify","durationSeconds":-120,"reminders":[]}
+"Take away 2 and a half minutes" -> {"action":"modify","durationSeconds":-150,"reminders":[]}
 "Pause the timer now" -> {"action":"pause"}
 "Resume the timer please" -> {"action":"resume"}
 "Cancel the timer / stop everything" -> {"action":"stop"}
@@ -395,9 +520,17 @@ Examples:
 "Set timer for 2" -> {"action":"start","durationSeconds":120,"reminders":[]} 
 "Remind me in 90 seconds, and also give me a warning 30 seconds before the end" -> {"action":"start","durationSeconds":90,"reminders":[{"triggerSeconds":30,"label":"30 seconds left"}]}
 "Set a 7 minute timer give me a 2-minute warning and a 30-second warning" -> {"action":"start","durationSeconds":420,"reminders":[{"triggerSeconds":120,"label":"2 minutes left"},{"triggerSeconds":30,"label":"30 seconds left"}]}
-"Start my Pasta Timer" -> {"action":"start","savedTimerName":"Pasta Timer"}
-"Please run the 'Quick' timer" -> {"action":"start","savedTimerName":"Quick"}
-"Start the timer called Baked Potato Timer" -> {"action":"start","savedTimerName":"Baked Potato Timer"}
+"Start my Pasta Timer" -> {"action":"start","timerName":"Pasta"}
+"Start carrots" -> {"action":"start","timerName":"carrot"}
+"Please run the 'Quick' timer" -> {"action":"start","timerName":"Quick"}
+"Start the timer called Baked Potato Timer" -> {"action":"start","timerName":"Baked Potato Timer"}
+"Save this timer as 'Pasta Timer'" -> {"action":"save","timerName":"Pasta Timer"}
+"Save the running timer" -> {"action":"save"}
+
+
+Make sure that when you modify a timer that you put enter an accurate time in seconds, and that it is accurate to whether the user want to add or subtract time
+Make sure that when you start saved timers that timerName is part of known timers
+
 
 Now convert this input to JSON: "${transcript.replace(/"/g, '\\"')}"`;
     try {
@@ -427,19 +560,19 @@ Now convert this input to JSON: "${transcript.replace(/"/g, '\\"')}"`;
     try {
       if (!aiCommand) return;
       let cmd = Object.assign({}, aiCommand);
-      if (cmd.savedTimerName && (!cmd.durationSeconds || Number(cmd.durationSeconds) === 0)) {
+      if (cmd.timerName && (!cmd.durationSeconds || Number(cmd.durationSeconds) === 0)) {
         const lookup = (Array.isArray(cachedSavedTimers) && cachedSavedTimers.length) ? cachedSavedTimers : await fetchSavedTimers().catch(()=>[]);
-        const name = String(cmd.savedTimerName || '').trim().toLowerCase();
+        const name = String(cmd.timerName || '').trim().toLowerCase();
         let found = (lookup || []).find(t => String(t.name || '').trim().toLowerCase() === name) || (lookup || []).find(t => String(t.name || '').trim().toLowerCase().startsWith(name)) || (lookup || []).find(t => String(t.name || '').trim().toLowerCase().includes(name));
         if (found) {
           cmd.durationSeconds = Number(found.durationSeconds || 0);
           cmd.reminders = Array.isArray(found.reminders) ? found.reminders.map(r => ({triggerSeconds: Number(r.triggerSeconds || 0), label: String(r.label || '')})) : [];
         } else {
-          showMessage(`No saved timer named "${cmd.savedTimerName}"`);
-          delete cmd.savedTimerName;
+          showMessage(`No saved timer named "${cmd.timerName}"`);
+          delete cmd.timerName;
           return;
         }
-        delete cmd.savedTimerName;
+        delete cmd.timerName;
       }
       if (cmd.savedTimerId && (!cmd.durationSeconds || Number(cmd.durationSeconds) === 0)) {
         const lookup = (Array.isArray(cachedSavedTimers) && cachedSavedTimers.length) ? cachedSavedTimers : await fetchSavedTimers().catch(()=>[]);
@@ -450,11 +583,11 @@ Now convert this input to JSON: "${transcript.replace(/"/g, '\\"')}"`;
         }
         delete cmd.savedTimerId;
       }
-      await fetch('/api/command', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({clientId: localStorage.getItem('vc_client_id'), aiCommand: cmd, reminders: cmd.reminders || []})
-      });
+      if (String(cmd.action || '').toLowerCase() === 'save') {
+        await saveAiTimer(cmd);
+        return;
+      }
+      await queueAiCommand(cmd, cmd.reminders||[]);
     } catch (err) {
       console.error('postAiCommand error', err);
       showMessage('Command error');
@@ -463,9 +596,10 @@ Now convert this input to JSON: "${transcript.replace(/"/g, '\\"')}"`;
   window.postAiCommand = postAiCommand;
 
   /* ── Mic control ──────────────────────────────────────── */
-  function startMic() {
+  async function startMic() {
     if (!hasSpeech) {
       timerStatus.textContent = "Web Speech API not supported in this browser.";
+      showMessage('Web Speech API Not supported By Your Browser');
       return;
     }
 
@@ -486,19 +620,53 @@ Now convert this input to JSON: "${transcript.replace(/"/g, '\\"')}"`;
         transcript.textContent = latestText.trim() || "Listening...";
       };
 
-      recognition.onerror = () => {
-        timerStatus.textContent = "Microphone erro...";
+      recognition.onerror = (event) => {
+        console.error('recognition.onerror', event);
+        showMessage('Microphone error: Please Check Permissions And Try Again');
       };
 
       recognition.onend = () => {
-        if (micEnabled) recognition.start();
+        if (micEnabled) {
+          try {
+            recognition.start();
+          } catch (err) {
+            console.error('recognition restart failed', err);
+            showMessage('Microphone Stopped. Please Check Permissions Or Reconnect Microphone');
+            micEnabled = false;
+            updateMicUi();
+          }
+        }
       };
     }
 
     micEnabled = true;
     updateMicUi();
     transcript.textContent = "Listening...";
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (err) {
+      console.error('Mic Start Error', err);
+      try {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          await navigator.mediaDevices.getUserMedia({audio:true});
+          try {recognition.start();}
+          catch (e) {console.error('second recognition start failed', e); showMessage('Microphone Start Failed. Please check Site Permissions Or Reload The Site');}
+        } else {
+          showMessage('Microphone API Not Available');
+        }
+      } catch (permErr) {
+        console.error('getUserMedia permission error', permErr);
+        if (permErr && permErr.name === 'NotAllowedError') {
+          showMessage('Microphone Access Was Denied. Please Enable Microphone Access In Browser Settings');
+        } else if (permErr && permErr.name === 'NotFoundError') {
+          showMessage('No Microphone Found');
+        } else {
+          showMessage('Microphone Was Unavailable. Please Check Site Permissions');
+        }
+        micEnabled = false;
+        updateMicUi();
+      }
+    }
   }
 
   function stopMic() {
@@ -522,15 +690,22 @@ Now convert this input to JSON: "${transcript.replace(/"/g, '\\"')}"`;
     const mins = Math.max(0, Number(minutesInput.value) || 0);
     const secs = Math.max(0, Math.min(59, Number(secondsInput.value) || 0));
     const total = mins * 60 + secs;
-    sendCommand(`set timer for ${total} seconds`, {reminders: currentReminders});
+    if (total > 0) {
+      sendCommand(`set timer for ${total} seconds`, {reminders: currentReminders});
+    } else {
+      showMessage('Please enter a valid duration');
+    }
   });
 
   startBtn.addEventListener("click", () => {
     const mins = Math.max(0, Number(minutesInput.value) || 0);
     const secs = Math.max(0, Math.min(59, Number(secondsInput.value) || 0));
     const total = mins * 60 + secs;
-    if (total > 0) sendCommand(`start timer for ${total} seconds`, {reminders: currentReminders});
-    else sendCommand('start timer for 33 seconds', {reminders: currentReminders});
+    if (total > 0) {
+      sendCommand(`start timer for ${total} seconds`, {reminders: currentReminders});
+    } else {
+      showMessage('Please enter a valid duration');
+    }
   });
 
   pauseBtn.addEventListener("click", () => sendCommand('pause'));
@@ -543,7 +718,7 @@ Now convert this input to JSON: "${transcript.replace(/"/g, '\\"')}"`;
 
   presetButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
-      presetButtons.forEach(b => b.classList.remove("active"));
+      presetButtons.forEach(b => b.classList.remove('active'));
       btn.classList.add("active");
 
       const mins = Number(btn.dataset.minutes) || 0;
@@ -740,6 +915,19 @@ Now convert this input to JSON: "${transcript.replace(/"/g, '\\"')}"`;
   loadAndRenderSavedTimers();
   initWebLLM();
 
+  try {
+    if (navigator.permissions && navigator.permissions.query) {
+      navigator.permissions.query({name:'microphone'}).then(p => {
+        try {
+          if (p.state === 'denied') {
+            showMessage('Microphone Access Was Denied. Please Enable Microphone Access In Browser Settings');
+          } else if (p.state === 'prompt') {
+          }
+        } catch (e) {}
+      }).catch(()=>{});
+    }
+  } catch (e) {}
+
   let clientId = localStorage.getItem('vc_client_id');
   if (!clientId) {
     clientId = '_' + Math.random().toString(36).substr(2, 9);
@@ -805,6 +993,7 @@ Now convert this input to JSON: "${transcript.replace(/"/g, '\\"')}"`;
   function showMessage(text) {
     if (!text) return;
     timerStatus.textContent = text;
+    speak(text);
     setTimeout(() => {if (timerStatus.textContent === text) timerStatus.textContent = '';}, 3000);
   }
 
