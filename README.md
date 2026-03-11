@@ -47,8 +47,8 @@ Make a file named ".env" in /backend, with these variables filled out:
 
  - PEPPER= "long random string, or a word/sentence you really like"
 
-### Finally, Start The Server With
-- npm start
+### Finally, While In /backend Start The Server With
+- node server.js
 ### And Go To http://localhost:4000 In Your Browser
 
 &nbsp;
